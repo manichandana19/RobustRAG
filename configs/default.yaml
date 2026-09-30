@@ -1,0 +1,26 @@
+project:
+  name: rag-hallucination-detector
+  seed: 42
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+model:
+  name: microsoft/deberta-v3-base
+  num_labels: 2
+  max_length: 512
+
+training:
+  batch_size: 8
+  learning_rate: 2.0e-5
+  epochs: 3
+  weight_decay: 0.01
+
+experiment:
+  input_mode: qca
+
+  # Supported modes:
+  # qa  -> Question + Answer
+  # ca  -> Context + Answer
+  # qca -> Question + Context + Answer

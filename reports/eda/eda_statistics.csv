@@ -1,0 +1,3 @@
+group,records,answer_words_mean,answer_words_median,context_words_mean,context_words_median,lexical_overlap_mean,annotation_density_mean
+Supported,10126,118.78540391072487,111.0,382.5937191388505,319.0,0.6833314047273973,0.0
+Hallucinated,7664,146.23094989561588,138.0,378.2954070981211,319.0,0.5129586494311903,0.01359774629629309

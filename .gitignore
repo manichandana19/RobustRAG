@@ -220,3 +220,5 @@ __marimo__/
 *.jsonl
 data/processed/*.jsonl
 data/raw/*.jsonl
+
+.zip

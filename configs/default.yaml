@@ -24,3 +24,12 @@ experiment:
   # qa  -> Question + Answer
   # ca  -> Context + Answer
   # qca -> Question + Context + Answer
+
+baseline:
+  input_mode: ca
+  ngram_range: [1, 2]
+  min_df: 2
+  max_df: 0.95
+  sublinear_tf: true
+  max_iter: 1000
+  C: 1.0

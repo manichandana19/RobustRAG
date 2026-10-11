@@ -222,3 +222,5 @@ data/processed/*.jsonl
 data/raw/*.jsonl
 
 .zip
+reports/experiments/
+reports/experiments_backup/

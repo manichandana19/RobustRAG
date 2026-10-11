@@ -1,0 +1,42 @@
+[project]
+name = "robustrag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Nishant Bothra", email = "sit.nishant@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "torch",
+    "transformers",
+    "sentencepiece",
+    "accelerate",
+    "datasets",
+    "scikit-learn",
+    "pandas",
+    "matplotlib",
+    "ipykernel",
+    "tiktoken>=0.14.0",
+    "protobuf>=7.36.2",
+]
+
+[project.scripts]
+robustrag = "robustrag:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+# --- UPDATE THESE LINES TO USE CUDA 13 ---
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }

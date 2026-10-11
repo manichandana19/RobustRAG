@@ -1,0 +1,17 @@
+model:
+  name: microsoft/deberta-v3-base
+  num_labels: 2
+  max_length: 512
+
+training:
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  epochs: 3
+  weight_decay: 0.01
+  early_stopping_patience: 1
+  bf16: true
+  gradient_checkpointing: true
+
+experiment:
+  input_mode: ca

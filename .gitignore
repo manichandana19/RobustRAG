@@ -224,3 +224,17 @@ data/raw/*.jsonl
 .zip
 reports/experiments/
 reports/experiments_backup/
+
+
+# Local databases and secrets
+*.db
+.env
+.env.*
+
+# Trained checkpoints and experiment outputs
+reports/experiments/
+reports/experiments_backup/
+
+# Local dataset files
+data/raw/
+data/processed/

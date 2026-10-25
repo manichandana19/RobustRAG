@@ -1,4 +1,4 @@
-﻿# RobustRAG - Detailed Project Progress
+# RobustRAG - Detailed Project Progress
 
 ---
 
@@ -27,37 +27,30 @@ Robustness is both a design goal and an experimental axis. It will be specifical
 
 ### Completed
 
-- Dataset ingestion: Raw RAGTruth JSONL loaded, responses joined to sources, RAGTruthRecord objects constructed.
-- Data validation: Schema enforcement, duplicate ID detection, split label validation, source-split leakage check.
-- Data audit: Summary statistics (record counts, label distributions, source overlap, etc.).
-- Train/validation/test handling: Fixed test split preserved from RAGTruth. Source-grouped validation split from train data.
-- Processed dataset: data/processed/ragtruth.jsonl (17,790 records).
-- EDA: 19 figures in reports/eda/. Summary statistics CSV. Written summary in reports/eda/eda_summary.md.
-- Classical baseline: TF-IDF (unigrams+bigrams) + Logistic Regression. Input: Context + Answer.
-- Structured context handling: normalize_text() in modeling/tfidf_logistic.py handles str and dict context.
-- Baseline evaluation: Full metric suite saved to reports/experiments/baseline_tfidf_logreg/metrics.json.
-- Artifact archiving: model.pkl, metrics.json, config.yaml, test_predictions.jsonl per experiment.
-- Tests: 15 unit tests covering loader, preprocessing, splitting, validation, and baseline model behavior.
+- **Dataset Ingestion & Validation**: Raw RAGTruth loaded, validated, source-disjoint split created (17,790 records: 13,578 train, 1,512 val, 2,700 test).
+- **Exploratory Data Analysis**: 19 figures generated in `reports/eda/` with summary statistics and task-level distributions.
+- **Classical Lexical Baseline**: TF-IDF + Logistic Regression (437k n-gram features) evaluated (Acc: 76.78%, ROC-AUC: 0.7977).
+- **Pretrained Transformer Baseline**: DeBERTa-v3-base (512 tokens) trained and evaluated (Acc: 75.78%, ROC-AUC: 0.7912).
+- **System Architecture Audit**: Systematic investigation of the Answer-Erasure pathology in 512-token right-truncation cross-encoders documented in `audit_report.md`.
+- **Answer-Preserving Longformer Models**:
+  - Longformer-1024 Head Truncation (Project State-of-the-Art): Acc 79.78%, ROC-AUC 0.8296, PR-AUC 0.7527.
+  - Longformer-1024 Tail Truncation: Acc 77.56%, ROC-AUC 0.8187, PR-AUC 0.7331.
+  - Longformer-1024 Smart QCA (`SentenceSelector` with contradiction bonuses): Acc 76.33%, ROC-AUC 0.8144, PR-AUC 0.7420.
+- **Neural Recurrent Baseline**: BiLSTM + Bahdanau Attention (2-layer, 128 hidden dim) trained with custom vocabulary.
+- **Interactive Presentation Notebook**: `models_research_and_presentation.ipynb` with comparative visualizations and case studies.
+- **Hugging Face Hub Model Deployment**: All 5 models packaged and published to Hugging Face Hub under `nishantwhat`.
+- **Unified Model Registry & Lazy Inference**: Implemented `src/hallucination_detector/inference/model_registry.py` with automatic download, HF caching, and model-specific preprocessing. Verified end-to-end across all 5 models.
 
-### Partially Completed
+### Current Phase
 
-- configs/default.yaml: Contains both classical baseline config (used) and transformer config fields (not yet used by any code). The transformer config is present as a placeholder only.
+- **Deployment & Interface Verification**: Model registry and Hugging Face Hub inference verified. Streamlit web application planned for subsequent user interface release.
 
-### Planned / Next
+### Planned / Next Milestones
 
-- DeBERTa-v3-base transformer baseline (next immediate experiment)
-- Input ablation: compare Q+A, C+A, Q+C+A
-- Robustness evaluation under degraded context conditions
-- External generalization evaluation beyond RAGTruth
-- Error analysis by hallucination annotation type
-- Final cross-model comparison table
+- Full 4,096-token Longformer sliding window scaling experiments.
+- External generalization tests on out-of-domain benchmarks (HaluEval, FaithDial).
+- Token-level and span-level multi-task classification for pinpoint hallucination attribution.
 
-### Not Yet Implemented
-
-- Any transformer model code or training loop
-- Validation-set-based early stopping
-- Any robustness test harness
-- Any cross-dataset evaluation
 - Any error stratification by annotation type
 - Threshold analysis or precision-recall curve generation (beyond saved probabilities)
 

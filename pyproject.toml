@@ -1,7 +1,7 @@
 [project]
 name = "robustrag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hallucination detection in Retrieval-Augmented Generation (RAG) systems"
 readme = "README.md"
 authors = [
     { name = "Nishant Bothra", email = "sit.nishant@gmail.com" }
@@ -19,6 +19,14 @@ dependencies = [
     "ipykernel",
     "tiktoken>=0.14.0",
     "protobuf>=7.36.2",
+    "huggingface_hub>=0.23.0",
+    "streamlit>=1.66.1",
+    "torchvision>=0.29.1",
+]
+
+[project.optional-dependencies]
+ui = [
+    "streamlit>=1.35.0",
 ]
 
 [project.scripts]
@@ -32,7 +40,7 @@ build-backend = "uv_build"
 dev = [
     "pytest",
 ]
-# --- UPDATE THESE LINES TO USE CUDA 13 ---
+
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"

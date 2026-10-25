@@ -26,6 +26,8 @@ from hallucination_detector.data.torch_dataset import (
 from hallucination_detector.data.longformer_smart_dataset import (
     RAGTruthSmartLongformerDataset,
 )
+from hallucination_detector.inference.deberta_encoding import encode_context_answer
+from hallucination_detector.inference.selector_io import load_selector
 from hallucination_detector.modeling.bilstm_classifier import BiLSTMClassifier
 from hallucination_detector.modeling.tfidf_logistic import (
     TfidfLogisticClassifier,
@@ -112,9 +114,17 @@ MODEL_CATALOG: dict[str, ModelMetadata] = {
 class ModelRegistry:
     """Lazy model loader and inference coordinator for RobustRAG models."""
 
-    def __init__(self, cache_dir: str | Path | None = None, prefer_remote: bool = False) -> None:
+    def __init__(
+        self,
+        cache_dir: str | Path | None = None,
+        prefer_remote: bool = False,
+        deberta_preserve_answer: bool = True,
+    ) -> None:
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.prefer_remote = prefer_remote
+        # True: when input exceeds 512 tokens, shorten the context so the answer survives.
+        # False: reproduce the legacy right-truncation the DeBERTa checkpoint was trained with.
+        self.deberta_preserve_answer = deberta_preserve_answer
         self._loaded_models: dict[str, Any] = {}
 
     def get_catalog(self) -> dict[str, ModelMetadata]:
@@ -213,9 +223,22 @@ class ModelRegistry:
         model = LongformerForSequenceClassification.from_pretrained(model_path)
         model.to(torch.device(device))
         model.eval()
-        # Default empty/unbiased sentence selector for zero-shot ranking
-        selector = SentenceSelector(default_idf=1.0)
-        return {"model": model, "tokenizer": tokenizer, "selector": selector, "device": device}
+        # Training fitted IDF weights on the train split; use the same table at inference.
+        idf_path = Path(__file__).resolve().parents[3] / "configs" / "qca_selector_idf.json"
+        if idf_path.exists():
+            selector = load_selector(idf_path)
+            selector_fitted = True
+        else:
+            # Unfitted fallback (all word weights 1.0): does NOT match training preprocessing.
+            selector = SentenceSelector(default_idf=1.0)
+            selector_fitted = False
+        return {
+            "model": model,
+            "tokenizer": tokenizer,
+            "selector": selector,
+            "selector_fitted": selector_fitted,
+            "device": device,
+        }
 
     def predict(
         self,
@@ -228,6 +251,7 @@ class ModelRegistry:
         """Run single-instance inference with model-specific preprocessing."""
         meta = MODEL_CATALOG[model_key]
         model_obj = self.load_model(model_key, device=device)
+        extra_details: dict[str, Any] = {}
         record = RAGTruthRecord(
             id="query_1",
             source_id="src_1",
@@ -250,10 +274,19 @@ class ModelRegistry:
             tok = model_obj["tokenizer"]
             mod = model_obj["model"]
             dev = model_obj["device"]
-            # DeBERTa single-string C+A
-            text = f"[CONTEXT] {normalize_text(context)} [ANSWER] {normalize_text(answer)}"
-            encoded = tok(text, max_length=512, truncation=True, padding=True, return_tensors="pt")
-            encoded = {k: v.to(dev) for k, v in encoded.items()}
+            # DeBERTa single-string C+A; context is shortened (not the answer) when too long.
+            enc, trunc_info = encode_context_answer(
+                tok,
+                normalize_text(context),
+                normalize_text(answer),
+                max_length=512,
+                preserve_answer=self.deberta_preserve_answer,
+            )
+            extra_details["truncation"] = trunc_info
+            encoded = {
+                "input_ids": torch.tensor([enc["input_ids"]], dtype=torch.long).to(dev),
+                "attention_mask": torch.tensor([enc["attention_mask"]], dtype=torch.long).to(dev),
+            }
             with torch.no_grad():
                 out = mod(**encoded)
                 probs = F.softmax(out.logits, dim=-1).cpu().numpy()[0]
@@ -307,6 +340,7 @@ class ModelRegistry:
                 out = mod(**batch)
                 probs = F.softmax(out.logits, dim=-1).cpu().numpy()[0]
             p_sup, p_hal = float(probs[0]), float(probs[1])
+            extra_details["selector_fitted"] = model_obj["selector_fitted"]
 
         else:
             raise NotImplementedError(f"Prediction logic for {model_key} not implemented.")
@@ -323,5 +357,5 @@ class ModelRegistry:
             supported_probability=p_sup,
             raw_score=p_hal,
             is_calibrated=False,
-            details={"input_mode": meta.input_mode, "architecture": meta.architecture},
+            details={"input_mode": meta.input_mode, "architecture": meta.architecture, **extra_details},
         )

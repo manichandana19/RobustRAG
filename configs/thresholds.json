@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "source": "RAGTruth validation split, 100 records per task (50 hallucinated / 50 supported), model longformer-head, measured with verify_app_inference.py",
+    "caveat": "Rates come from a 50/50 balanced sample and ~100 records per task, so they are rough. Real-world precision depends on how often your RAG system hallucinates."
+  },
+  "longformer-head": {
+    "QA": {
+      "reliable": true,
+      "uncertain_from": 0.30,
+      "likely_from": 0.60,
+      "note": "Validation: scores >= 0.60 flagged 34% of hallucinations and 2% of supported answers. Scores below 0.30 still contained 38% of hallucinations."
+    },
+    "Summarization": {
+      "reliable": false,
+      "note": "Validation AUC was 0.50 (chance): supported and hallucinated summaries received the same average score (0.31 vs 0.32). No threshold separates them."
+    },
+    "Data-to-text": {
+      "reliable": true,
+      "uncertain_from": 0.40,
+      "likely_from": 0.70,
+      "note": "Validation: scores >= 0.70 flagged 82% of hallucinations and 18% of supported answers. Scores below 0.40 still contained 16% of hallucinations. This task is mostly hallucinated in the data (about 64-69%), so scores run high."
+    }
+  }
+}

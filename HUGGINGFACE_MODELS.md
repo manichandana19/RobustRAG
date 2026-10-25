@@ -2,6 +2,8 @@
 
 This guide documents the five models published to Hugging Face under the `nishantwhat` organization for the **RobustRAG** benchmark, their hardware requirements, and how to use them with the Streamlit app.
 
+Performance numbers below are historical model-card/project claims, not reproduced results for the artifacts currently resolved by this workspace's registry. The latest selected-model held-out evaluation is in `reports/benchmarks/`; it covers TF-IDF and BiLSTM, while the transformer models were not evaluated on the full test split because the CPU Longformer pass exceeded the available run window. Model artifact training provenance is partial, and Longformer QCA preprocessing compatibility remains unverified.
+
 ---
 
 ## 1. Remote Model Repository Catalog
@@ -13,14 +15,14 @@ All model weights and configuration artifacts are hosted publicly on Hugging Fac
 | 1 | **Longformer (Head Truncation)** | [`nishantwhat/robustrag-longformer-head`](https://huggingface.co/nishantwhat/robustrag-longformer-head) | Context + Answer | ~595 MB | 1024 tokens |
 | 2 | **Longformer (Smart Q+C+A)** | [`nishantwhat/robustrag-longformer-qca`](https://huggingface.co/nishantwhat/robustrag-longformer-qca) | Question + Context + Answer | ~595 MB | 1024 tokens |
 | 3 | **DeBERTa-v3-base** | [`nishantwhat/robustrag-deberta`](https://huggingface.co/nishantwhat/robustrag-deberta) | Context + Answer | ~737 MB | 512 tokens |
-| 4 | **BiLSTM + Attention** | [`nishantwhat/robustrag-bilstm-attention`](https://huggingface.co/nishantwhat/robustrag-bilstm-attention) | Context + Answer | ~20.5 MB | 512 tokens |
+| 4 | **BiLSTM + Attention** | [`nishantwhat/robustrag-bilstm-attention`](https://huggingface.co/nishantwhat/robustrag-bilstm-attention) | Question + Context + Answer | ~20.5 MB | 512 tokens |
 | 5 | **TF-IDF + Logistic Reg** | [`nishantwhat/robustrag-tfidf-lr`](https://huggingface.co/nishantwhat/robustrag-tfidf-lr) | Context + Answer | ~15.4 MB | Unlimited |
 
 ---
 
 ## 2. Model Requirements & Modalities
 
-### 1. Longformer (Head Truncation) - Project State-of-the-Art
+### 1. Longformer (Head Truncation)
 - **Repo ID**: `nishantwhat/robustrag-longformer-head`
 - **Architecture**: `LongformerForSequenceClassification` with local attention sliding window ($w=512$) and global attention on the `<s>` `[CLS]` token.
 - **Input Strategy**: Answer tokens are prioritized and preserved at 100% fidelity. Context is truncated from the head (retaining trailing context closest to the answer).
@@ -30,6 +32,7 @@ All model weights and configuration artifacts are hosted publicly on Hugging Fac
 - **Repo ID**: `nishantwhat/robustrag-longformer-qca`
 - **Architecture**: Longformer with `SentenceSelector` extractive preprocessing.
 - **Input Strategy**: Allocates token budget to Question and Answer first. Context sentences are ranked using IDF relevance and contradiction bonuses (+2.0 numerical discrepancy, +2.5 polarity inversion).
+- **Compatibility limitation**: The published checkpoint lacks the fitted selector and its matching provenance manifest, so the registry refuses to load it. The historical published metrics predate that fail-closed check and do not verify the fitted-selector pipeline. New candidate bundles include the selector, model/tokenizer files, and SHA-256 provenance manifest.
 - **Performance**: Test Accuracy: **76.33%**, ROC-AUC: **0.8144**, PR-AUC: **0.7420**.
 
 ### 3. DeBERTa-v3-base

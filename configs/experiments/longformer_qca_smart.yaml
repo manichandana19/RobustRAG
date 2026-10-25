@@ -14,8 +14,8 @@ model:
   global_attention_mode: cls
 
 training:
-  batch_size: 2
-  gradient_accumulation_steps: 8
+  batch_size: 1
+  gradient_accumulation_steps: 16
   learning_rate: 2.0e-05
   epochs: 3
   weight_decay: 0.01

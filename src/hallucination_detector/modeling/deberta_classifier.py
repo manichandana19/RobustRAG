@@ -211,10 +211,36 @@ from transformers import (
 )
 
 from hallucination_detector.data.schema import RAGTruthRecord
-from hallucination_detector.data.torch_dataset import RAGTruthTransformerDataset
+from hallucination_detector.modeling.deberta_encoding import (
+    encode_deberta_input,
+    format_deberta_input,
+)
 
 
-SPECIAL_TOKENS = ["[CONTEXT]", "[ANSWER]"]
+class RAGTruthDebertaDataset(torch.utils.data.Dataset):
+    """DeBERTa inputs matching the registry's single-string C+A inference path."""
+
+    def __init__(
+        self,
+        records: Sequence[RAGTruthRecord],
+        tokenizer,
+        max_length: int,
+    ) -> None:
+        self.records = list(records)
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        record = self.records[index]
+        encoded = encode_deberta_input(record.context, record.answer, self.tokenizer, self.max_length)
+        encoded.pop("truncation")
+        return {
+            key: torch.tensor(value, dtype=torch.long)
+            for key, value in encoded.items()
+        } | {"labels": torch.tensor(int(record.hallucinated), dtype=torch.long)}
 
 
 @dataclass
@@ -247,10 +273,6 @@ class DeBERTaClassifier:
             self.model_name,
             use_fast=True,
         )
-        self.tokenizer.add_special_tokens(
-            {"additional_special_tokens": SPECIAL_TOKENS}
-        )
-
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.model_name,
             num_labels=2,
@@ -258,7 +280,6 @@ class DeBERTaClassifier:
             id2label={0: "SUPPORTED", 1: "HALLUCINATED"},
             label2id={"SUPPORTED": 0, "HALLUCINATED": 1},
         )
-        self.model.resize_token_embeddings(len(self.tokenizer))
         self._assert_fp32()
 
     def _assert_fp32(self) -> None:
@@ -283,11 +304,10 @@ class DeBERTaClassifier:
     def build_dataset(
         self,
         records: Sequence[RAGTruthRecord],
-    ) -> RAGTruthTransformerDataset:
-        return RAGTruthTransformerDataset(
+    ) -> RAGTruthDebertaDataset:
+        return RAGTruthDebertaDataset(
             records=records,
             tokenizer=self.tokenizer,
-            input_mode=self.input_mode,
             max_length=self.max_length,
         )
 
@@ -331,31 +351,10 @@ class DeBERTaClassifier:
             model_path,
             use_fast=True,
         )
-        missing_tokens = [
-            token
-            for token in SPECIAL_TOKENS
-            if token not in classifier.tokenizer.get_vocab()
-        ]
-        if missing_tokens:
-            raise ValueError(
-                "Checkpoint tokenizer is missing required special tokens "
-                f"{missing_tokens}. Load a checkpoint saved with this class "
-                "or retrain/save the tokenizer and model together."
-            )
-
         classifier.model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             torch_dtype=torch.float32,
         )
-        embedding_count = classifier.model.get_input_embeddings().num_embeddings
-        if embedding_count != len(classifier.tokenizer):
-            raise ValueError(
-                "Tokenizer/model vocabulary mismatch: tokenizer has "
-                f"{len(classifier.tokenizer)} tokens but model embeddings have "
-                f"{embedding_count} rows. Save/load the model and tokenizer "
-                "from the same checkpoint."
-            )
-
         classifier._assert_fp32()
         return classifier
 

@@ -30,7 +30,7 @@ from transformers import get_linear_schedule_with_warmup
 from hallucination_detector.data.loader import load_jsonl
 from hallucination_detector.data.schema import RAGTruthRecord
 from hallucination_detector.data.torch_dataset import LongformerDataCollator
-from hallucination_detector.evaluation.metrics import evaluate_binary_classifier
+from hallucination_detector.evaluation.metrics import evaluate_binary_classifier, format_metric
 from hallucination_detector.modeling.longformer_classifier import LongformerClassifier
 
 
@@ -452,6 +452,6 @@ def train_longformer(
     print(f"Artifacts saved to {output_dir}")
     print(f"Test Accuracy: {metrics.get('accuracy', 0):.4f}")
     print(f"Test F1:       {metrics.get('f1', 0):.4f}")
-    print(f"Test ROC-AUC:  {metrics.get('roc_auc', 0):.4f}")
+    print(f"Test ROC-AUC:  {format_metric(metrics.get('roc_auc'))}")
 
     return metrics

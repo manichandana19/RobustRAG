@@ -1,0 +1,21 @@
+schema_version: 1
+default_hallucination_threshold: 0.5
+models:
+  longformer-head:
+    task_rules:
+      QA:
+        supported_below: 0.30
+        hallucinated_at_or_above: 0.60
+      Data-to-text:
+        supported_below: 0.40
+        hallucinated_at_or_above: 0.70
+      Summarization:
+        verdict: NO RELIABLE VERDICT
+        reason: "Validation ROC AUC is near chance; no binary task verdict is issued."
+      Not sure:
+        threshold: 0.50
+validation_evidence:
+  report: reports/validation/task_verdict_evidence_20261025/task_verdict_evidence.md
+  source_predictions: reports/validation/threshold_sweep_20261025_205000/validation_predictions.csv
+  split: validation
+  thresholds_are_uncalibrated_operating_bands: true

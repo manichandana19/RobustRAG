@@ -20,7 +20,7 @@ from hallucination_detector.data.bilstm_dataset import (
     RAGTruthBiLSTMDataset,
     BiLSTMDataCollator,
 )
-from hallucination_detector.evaluation.metrics import evaluate_binary_classifier
+from hallucination_detector.evaluation.metrics import evaluate_binary_classifier, format_metric
 from hallucination_detector.modeling.bilstm_classifier import BiLSTMClassifier
 
 
@@ -206,8 +206,8 @@ def train_bilstm(
     print(f"\n[Done] Training complete. Artifacts saved to: {out_dir}")
     print(f"Test Accuracy : {test_metrics['accuracy']:.4f}")
     print(f"Test F1 Score : {test_metrics['f1']:.4f}")
-    print(f"Test ROC-AUC  : {test_metrics['roc_auc']:.4f}")
-    print(f"Test Avg Prec : {test_metrics['average_precision']:.4f}")
+    print(f"Test ROC-AUC  : {format_metric(test_metrics['roc_auc'])}")
+    print(f"Test Avg Prec : {format_metric(test_metrics['average_precision'])}")
 
     return test_metrics
 

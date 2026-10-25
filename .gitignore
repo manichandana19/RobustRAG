@@ -238,3 +238,37 @@ reports/experiments_backup/
 # Local dataset files
 data/raw/
 data/processed/
+
+# Local datasets and archives
+data/
+data.zip
+
+# Local model checkpoints and downloaded artifacts
+models/
+*.pt
+*.pth
+*.safetensors
+*.bin
+
+# Generated reports and evaluation outputs
+reports/
+
+# Temporary test artifacts
+.test-tmp/
+.pytest_cache/
+__pycache__/
+
+# Local environments and secrets
+.venv/
+.env
+.env.*
+!.env.example
+
+# Local datasets and model checkpoints
+data/
+data.zip
+models/
+*.pt
+*.pth
+*.safetensors
+*.bin

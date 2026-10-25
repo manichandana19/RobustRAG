@@ -30,7 +30,7 @@ def create_showcase_notebook():
     # SECTION 1: PROJECT OBJECTIVE AND SCOPE
     # =========================================================================
     md("""# RobustRAG — Demo & Research Showcase
-## Live Demonstration of 5 Evaluated Models on RAGTruth
+## Live Demonstration of 4 Available Models with Historical RAGTruth Results
 
 ---
 
@@ -41,10 +41,12 @@ Retrieval-Augmented Generation (RAG) pairs an external evidence passage $C$ with
 
 **Benchmark:** Human-annotated [RAGTruth](https://arxiv.org/abs/2401.00396) (17,790 records; 2,700 fixed test records across QA, Summarization, and Data-to-text).
 
+**Artifact status:** Four registered models are currently available. Longformer QCA remains unavailable because its required fitted selector and matching provenance bundle are missing. Historical benchmark figures below are preserved reference results; they do not establish real-world reliability.
+
 **Presentation Sections:**
 1. Project Objective and Scope
 2. Setup & Remote Hugging Face Model Availability
-3. Overview of the 5 Models & Input Formats
+3. Registered Models and Historical Benchmark Results
 4. Supported vs. Hallucinated Contrastive Pairs
 5. Side-by-Side Model Comparison & Latency Diagnostic
 6. Input-Ablation Diagnostic Experiments ($C+A$, $Q+C+A$, $Q+C$, $A$-only)
@@ -76,7 +78,8 @@ from hallucination_detector.inference.model_registry import ModelRegistry, MODEL
 
 print("Initializing ModelRegistry...")
 registry = ModelRegistry()
-catalog = registry.get_catalog()
+catalog = {key: meta for key, meta in registry.get_catalog().items()
+           if meta.provenance_status != "UNVERIFIED"}
 
 print(f"Registered Models: {len(catalog)}")
 for key, meta in catalog.items():
@@ -87,20 +90,20 @@ for key, meta in catalog.items():
     # SECTION 3: OVERVIEW OF THE FIVE MODELS
     # =========================================================================
     md("""---
-### 3. Overview of the 5 Models and Input Formats
+### 3. Model Configurations and Historical Benchmark Results
 
-Each model employs distinct tokenization, capacity, and architectural trade-offs:
+The table preserves historical model and benchmark figures. Longformer QCA's checkpoint is not currently verified and is not available for live inference.
 
 | Model Key | Architecture | Input Mode | Context Cap | Truncation / Attention Strategy | Verified Benchmark ROC-AUC |
 |---|---|:---:|:---:|---|:---:|
 | **`longformer-head`** | Longformer-Base | C + A | 1024 tokens | Answer preserved 100%; trailing context kept; local sliding window ($w=512$) + global CLS | **0.8296** (Best) |
-| **`longformer-qca`** | Longformer-Base | Q + C + A | 1024 tokens | Q & A preserved 100%; extractive `SentenceSelector` with contradiction bonuses | **0.8144** |
-| **`deberta`** | DeBERTa-v3-base | C + A | 512 tokens | Single-string `[CONTEXT] ctx [ANSWER] ans` with default right-truncation | **0.7912** |
+| **`longformer-qca`** | Longformer-Base | Q + C + A | 1024 tokens | Historical selector pipeline; current artifact unavailable pending verified selector/provenance | **0.8144 (historical)** |
+| **`deberta`** | DeBERTa-v3-base | C + A | 512 tokens | Current inference shortens context first to preserve answer; checkpoint was trained with right truncation | **0.7912 (historical)** |
 | **`bilstm-attention`**| 2-layer BiLSTM | C + A | 512 tokens | Word-level 50k vocab + additive Bahdanau self-attention | Evaluated baseline |
 | **`tfidf-lr`** | TF-IDF + Logistic Reg | C + A | Unlimited | 437k sublinear unigram+bigram n-grams, L2 $C=1.0$ | **0.7977** |
 """)
 
-    code("""# Display verified benchmark metrics compiled from experiment artifacts
+    code("""# Historical benchmark snapshot compiled from earlier experiment artifacts
 benchmark_metrics = pd.DataFrame([
     {"Model": "TF-IDF + Logistic Reg", "Context Cap": "Unlimited", "Input": "C + A", "Accuracy": "76.78%", "F1": "64.64%", "ROC-AUC": "0.7977", "PR-AUC": "0.7333"},
     {"Model": "DeBERTa-v3-base", "Context Cap": "512", "Input": "C + A", "Accuracy": "75.78%", "F1": "66.32%", "ROC-AUC": "0.7912", "PR-AUC": "0.6222"},
@@ -118,11 +121,12 @@ display(benchmark_metrics)
 ### 4. Supported versus Hallucinated Answer Examples
 We construct a clean contrastive pair where the ground-truth context and question remain identical, while the answer is swapped between a supported statement and an unsupported factual substitution.""")
 
-    code("""q_base = "Where was Marie Curie born?"
-c_base = "Marie Curie was born in Warsaw, in the Kingdom of Poland, on 7 November 1867. She was a physicist and chemist who conducted pioneering research on radioactivity."
-
-a_supported = "Marie Curie was born in Warsaw, Poland."
-a_hallucinated = "Marie Curie was born in Paris, France."
+    code("""manual_path = Path("reports/manual_evaluation/robustrag_manual_set_v1.json")
+manual_cases = json.loads(manual_path.read_text(encoding="utf-8"))["cases"]
+supported_case = next(row for row in manual_cases if row["case_id"] == "v1_qa_supported_place")
+contradiction_case = next(row for row in manual_cases if row["case_id"] == "v1_qa_contradiction_location")
+q_base, c_base = supported_case["question"], supported_case["context"]
+a_supported, a_hallucinated = supported_case["answer"], contradiction_case["answer"]
 
 print("[TEST QUERY]")
 print("Question:", q_base)
@@ -136,7 +140,7 @@ print("Hallucinated Answer:", a_hallucinated)
     # =========================================================================
     md("""---
 ### 5. Side-by-Side Model Comparison
-We evaluate both queries across all 5 models, measuring inference latency and output probabilities.""")
+We evaluate both queries across the four currently available models, measuring inference latency and uncalibrated model scores.""")
 
     code("""records = []
 
@@ -193,12 +197,12 @@ Transformer models (`deberta`, `longformer-head`, `longformer-qca`) assign lower
     md("""---
 ### 6. Input-Ablation Diagnostic Experiments
 We explore input combinations:
-- **C + A**: Context + Answer (Standard training mode for DeBERTa, Longformer Head, BiLSTM, TF-IDF).
-- **Q + C + A**: Question + Context + Answer (Standard training mode for Longformer Smart QCA).
+- **C + A**: Context + Answer (Longformer Head, DeBERTa, TF-IDF).
+- **Q + C + A**: Question + Context + Answer (BiLSTM-Attention).
 - **Q + C**: Context + Question with omitted Answer (Distribution shift diagnostic).
 - **A only**: Answer without context (Diagnostic for prior bias / language model hallucination artifacts).
 
-*Methodological Note:* Testing $A$-only or omitting $C$ represents an inference-time diagnostic to evaluate whether the model relies on context or makes assumptions from answer keywords alone.""")
+*Methodological Note:* Testing $A$-only or omitting $C$ represents an inference-time diagnostic to evaluate whether the model relies on context or makes assumptions from answer keywords alone. QCA is omitted until its selector and checkpoint provenance are verified.""")
 
     code("""ablation_cases = {
     "Full Q+C+A": {"q": q_base, "c": c_base, "a": a_hallucinated},
@@ -209,16 +213,12 @@ We explore input combinations:
 
 ablation_results = []
 for case_name, data in ablation_cases.items():
-    res_lf_qca = registry.predict("longformer-qca", data["q"], data["c"], data["a"])
-    res_lf_head = registry.predict("longformer-head", data["q"], data["c"], data["a"])
-    res_tfidf = registry.predict("tfidf-lr", data["q"], data["c"], data["a"])
-
-    ablation_results.append({
-        "Input Ablation": case_name,
-        "Longformer QCA P(Hal)": res_lf_qca.hallucination_probability,
-        "Longformer Head P(Hal)": res_lf_head.hallucination_probability,
-        "TF-IDF P(Hal)": res_tfidf.hallucination_probability,
-    })
+    for model_key in catalog:
+        result = registry.predict(model_key, data["q"], data["c"], data["a"])
+        ablation_results.append({"Input Ablation": case_name,
+            "Model": catalog[model_key].display_name,
+            "Input Mode": catalog[model_key].input_mode,
+            "P(Hal) uncalibrated": result.hallucination_probability})
 
 ablation_df = pd.DataFrame(ablation_results)
 display(ablation_df)
@@ -231,32 +231,20 @@ When context $C$ is removed (`Q+A only` and `A only`), the probability of halluc
     # SECTION 7: CONTEXT-QUALITY ROBUSTNESS
     # =========================================================================
     md("""---
-### 7. Context-Quality Robustness Experiments
-We fix the Question and generated Answer while varying retrieved context conditions:
-1. **Complete & Relevant Context**: Contains exact birth place and date.
-2. **Incomplete Context**: Mentions Marie Curie's achievements but omits birthplace entirely.
-3. **Noisy / Distractor Context**: Describes a different scientist (Albert Einstein in Ulm, Germany).
-4. **Directly Contradictory Context**: Context explicitly states she was born in Warsaw, directly contradicting "Paris".
-5. **Empty Context**: String is empty or uninformative whitespace.
+### 7. Existing Manual-Case Input Coverage
+This optional functional check reads already documented hand-authored cases from the manual set. It does not add examples, tune thresholds, or represent benchmark performance.""")
 
-*Target Definition:* The task is strictly **grounding verification** (is the answer entailed by the supplied context?), regardless of whether the context is factually accurate in the real world.""")
-
-    code("""fixed_q = "Where was Marie Curie born?"
-test_answer = "Marie Curie was born in Paris, France."
-
-context_conditions = {
-    "1. Complete Grounding": "Marie Curie was born in Paris, France on 7 November 1867.",  # Context supports Paris
-    "2. Incomplete Evidence": "Marie Curie was a pioneering physicist and two-time Nobel laureate.",  # Omits birth place
-    "3. Noisy Distractor": "Albert Einstein was born in Ulm, Germany in 1879. He developed relativity.",  # Irrelevant person
-    "4. Explicit Contradiction": "Marie Curie was born in Warsaw, Poland. She never lived in Paris during childhood.",  # Contradicts Paris
-    "5. Empty Context": "   ",  # Complete evidence absence
+    code("""selected_ids = {
+    "v1_qa_supported_place", "v1_qa_contradiction_location",
+    "v1_qa_unsupported_count_addition", "v1_qa_unsupported_location_addition",
 }
-
 robustness_records = []
-for cond_name, ctx in context_conditions.items():
-    row = {"Context Condition": cond_name}
-    for model_key in ["tfidf-lr", "deberta", "longformer-head", "longformer-qca"]:
-        res = registry.predict(model_key, fixed_q, ctx, test_answer)
+for case in manual_cases:
+    if case["case_id"] not in selected_ids:
+        continue
+    row = {"Context Condition": case["case_id"]}
+    for model_key in catalog:
+        res = registry.predict(model_key, case["question"] or "", case["context"], case["answer"])
         row[f"{catalog[model_key].display_name} P(Hal)"] = round(res.hallucination_probability, 4)
     robustness_records.append(row)
 
@@ -297,16 +285,16 @@ plt.show()
     # SECTION 8: PROBABILITY CALIBRATION & CONCLUSION
     # =========================================================================
     md("""---
-### 8. Probability Analysis & Conclusions
+### 8. Probability Analysis & Limitations
 
-#### Key Scientific Findings:
-1. **The Sequence-Length Truncation Bottleneck:** Standard 512-token cross-encoders like DeBERTa-v3 suffer severe answer-erasure when contexts exceed 512 subwords under naive right-truncation. Longformer-1024 with answer-preserving tokenization overcomes this bottleneck, achieving the highest benchmark score (**0.8296 ROC-AUC**).
-2. **Context Windowing Strategy:** Head truncation (retaining the trailing context closest to the answer) outperforms tail truncation by preserving closing statements and summary judgments.
-3. **Smart QCA Extractive Selection:** Incorporating question semantics alongside explicit contradiction penalties (+2.0 number discordance, +2.5 polarity shifts) provides robust ranking across complex queries.
-4. **Calibration Warning:** Raw softmax outputs should not be conflated with calibrated Bayesian probabilities. Base hallucination rates vary across tasks (17.8% QA vs. 64.3% Data-to-text); optimal decision thresholds should be tuned per task.
+#### Scope Notes:
+1. Historical benchmark scores in this notebook are preserved snapshots from earlier runs; the new answer-preserving DeBERTa input path has a separate validation-only sensitivity report and has not been retrained.
+2. Longformer Head validation separation varies by task: saved validation ROC AUC is near chance for Summarization, so the interface issues no reliable verdict for that task.
+3. Longformer QCA is not available for live inference until a complete trained bundle passes selector/provenance verification and validation checks.
+4. All model scores are uncalibrated outputs. These benchmarks do not establish real-world reliability.
 
 #### Presentation Summary:
-RobustRAG establishes an empirical, reproducible pipeline for hallucination detection with five verified models published on Hugging Face Hub, backed by automated caching and zero-shot deployment interfaces.
+RobustRAG provides a reproducible evaluation pipeline and four currently available model choices. QCA remains hidden until its artifact bundle is rebuilt and verified.
 """)
 
     notebook = {

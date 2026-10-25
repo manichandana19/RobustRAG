@@ -68,9 +68,9 @@ flowchart TD
 
 ---
 
-## 3. Evaluated Models & Verified Benchmark Results
+## 3. Historical Benchmark Claims and Current Verification
 
-All models were evaluated on the canonical, source-disjoint test split ([test.jsonl](data/processed/test.jsonl), $N = 2,700$ records, $34.93\%$ positive hallucination rate). Every metric below is sourced directly from verified `metrics.json` artifacts:
+The table below preserves figures that were already stated in earlier project documentation. In this workspace, the corresponding experiment `metrics.json` and per-record prediction artifacts are absent for four registered models, and the published checkpoint cards do not include the prediction files or dataset hashes needed to reproduce those figures. Treat these values as historical claims, not as results reproduced from the artifacts currently loaded by the registry. The fresh evaluator and its outputs are documented below and in [the recovery audit](reports/project_recovery_audit.md).
 
 | Model Architecture | Context Cap | Input Mode | Attention / Selection Strategy | Accuracy | Precision | Recall | F1-Score | ROC-AUC | PR-AUC |
 | :--- | :---: | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -80,7 +80,7 @@ All models were evaluated on the canonical, source-disjoint test split ([test.js
 | **Longformer (Tail)** | 1024 | C + A | Answer-preserved tokenization + keeps initial context | 77.56% | 67.94% | 67.66% | 67.80% | 0.8187 | 0.7331 |
 | **Longformer Smart QCA** | 1024 | Q + C + A | Q & A preserved + extractive sentence selector (IDF + contradiction bonus) | 76.33% | 66.49% | 65.01% | 65.74% | 0.8144 | 0.7420 |
 
-### Key Empirical Findings:
+### Previously Reported Findings (not independently reproduced in this checkout)
 1. **The Answer-Erasure Truncation Pathology in DeBERTa (512 tokens):**
    In naive single-string formatting (`[CONTEXT] <ctx> [ANSWER] <ans>`), contexts exceeding 512 subwords caused standard right-truncation to slice off the answer. Across the test split, **50.2% of answers were completely erased** (97.3% in Data-to-text). On QA where answers remained intact, DeBERTa decisively outperformed TF-IDF (86.11% vs. 80.89% Acc, 0.8261 vs. 0.6998 ROC-AUC).
 2. **Answer-Preserving Longformer-1024 (Head Truncation) is the Project Benchmark:**
@@ -145,7 +145,7 @@ RobustRAG/
 |   |   |-- baseline.py                 # Classical training orchestration
 |   |   |-- deberta_baseline.py         # DeBERTa training loop with BF16
 |   |   |-- longformer_train.py         # Longformer training loop with gradient accumulation
-|   |   `-- longformer_smart_train.py   # Longformer Smart QCA training and evaluation entry point
+|   |   `-- longformer_smart_train.py   # Train/validation-only QCA training helpers and entry point
 |   `-- evaluation/
 |       |-- metrics.py                  # Evaluation suite (Acc, F1, ROC, PR, CM)
 |       `-- eda.py                      # Visualization and statistics routines
@@ -255,12 +255,18 @@ uv run python scripts/train_longformer.py `
   --config configs/longformer_1024_tail.yaml `
   --output reports/experiments/longformer_1024_tail
 
-# 5. Train / Evaluate Longformer Smart QCA
-uv run python -m hallucination_detector.training.longformer_smart_train `
-  --config configs/experiments/longformer_qca_smart.yaml `
-  --data data/processed/ragtruth.jsonl `
-  --output-dir reports/experiments/longformer_1024_smart_qca
+# 5. Train a new Longformer Smart QCA candidate (train + validation only)
+$run = "reports/experiments/longformer_qca_candidate_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+uv run python scripts/train_longformer_qca.py `
+  --archive data.zip `
+  --config configs/experiments/longformer_qca_rtx4050.yaml `
+  --output-dir $run `
+  --device cuda:0 --batch-size 1 --gradient-accumulation-steps 16
 ```
+This command never opens the held-out test member. It saves a training-fitted selector and
+hash-verified provenance with the best validation-selected checkpoint. Use `--resume` only
+for an interrupted run with the same archive, config, base revision, code, and package versions.
+Do not run the held-out evaluation until the candidate has been frozen.
 
 ### C. Evaluate Saved Checkpoints
 ```powershell
@@ -268,7 +274,55 @@ uv run python -m hallucination_detector.training.longformer_smart_train `
 uv run python eval_check.py
 ```
 
-### D. Interactive Research Notebook
+### D. Hand-authored Model Diagnostics (not a benchmark)
+```powershell
+python scripts/evaluate_diagnostics.py --device cpu
+```
+This runs six labeled examples (supported, contradictory, unsupported addition,
+irrelevant answer, and a long-context contradiction) through all five models in
+`ModelRegistry`. It writes one row per model/example to
+`reports/diagnostics/model_diagnostic_predictions.csv`, including class
+expected label, predicted label, correctness, probabilities, input mode,
+registry artifact source, and any load/inference error. It also writes the
+per-model counts and diagnostic accuracy to
+`reports/diagnostics/model_diagnostic_summary.md`. The examples are useful for
+smoke checks and behavior inspection only;
+they are hand-authored and do not establish general performance. Use the
+source-disjoint held-out test split and its evaluation procedure for benchmark
+claims. In the recorded diagnostic run, TF-IDF assigned the Paris contradiction
+21.44% hallucination probability and Longformer Head assigned 32.48%; both also
+called the supported Warsaw answer supported. All five models ran successfully.
+Inspection found no verified label-order or preprocessing mismatch in the
+registry path: class 0 is treated as supported and class 1 as hallucinated,
+matching training labels. The registry loaded BiLSTM from its local checkpoint;
+the other four artifacts came from the Hugging Face cache because their
+registry-local checkpoint paths were absent. This is a model-behavior finding,
+not evidence of general performance or an inference defect. This command does
+not train models or modify checkpoints.
+
+### E. Reproduced held-out test evaluation
+
+`data.zip` contains the 2,700-record RAGTruth test split. The following run
+evaluated the complete split for two models; the generated report records the
+remaining three registered models as not evaluated. A full Longformer CPU pass
+had not completed after roughly 30 minutes, so no partial transformer results
+are reported.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/evaluate_benchmark.py --archive data.zip --output-dir reports/benchmarks --device cpu --batch-size 64 --models tfidf-lr bilstm-attention
+```
+
+| Model | Records | Accuracy | Precision | Recall | F1 | ROC-AUC | PR-AUC |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| TF-IDF + Logistic Regression | 2,700 | 0.7678 | 0.6904 | 0.6076 | 0.6464 | 0.7977 | 0.7333 |
+| BiLSTM + Bahdanau Attention | 2,700 | 0.6489 | 0.4982 | 0.7349 | 0.5938 | 0.7336 | 0.5911 |
+
+These results describe only this held-out split and these resolved artifacts;
+they do not establish general reliability. Full metrics, fixed-threshold
+comparisons, per-task results, artifact revisions and prediction rows are in
+`reports/benchmarks/`. Thresholds were not tuned on this split.
+
+### F. Interactive Research Notebook
 ```powershell
 uv run jupyter notebook models_research_and_presentation.ipynb
 ```

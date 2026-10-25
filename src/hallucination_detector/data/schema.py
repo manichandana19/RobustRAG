@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -8,14 +8,14 @@ class RAGTruthRecord:
     source_id: str
 
     question: str
-    context: str
+    context: str | dict[str, Any]
     answer: str
 
-    hallucinated: bool
+    hallucinated: bool = False
 
-    model: str | None
-    temperature: float | None
-    split: str
-    quality: str | None
+    model: str | None = None
+    temperature: float | None = None
+    split: str = "test"
+    quality: str | None = None
 
-    annotations: list[dict[str, Any]]
+    annotations: list[dict[str, Any]] = field(default_factory=list)

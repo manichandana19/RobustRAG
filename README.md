@@ -1,190 +1,241 @@
 # RobustRAG
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 24 Passed](https://img.shields.io/badge/tests-24%20passed-brightgreen.svg)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests Passing](https://img.shields.io/badge/tests-passing-brightgreen.svg)](tests/)
 
-A research project for hallucination detection in Retrieval-Augmented Generation (RAG) systems, built on the [RAGTruth](https://arxiv.org/abs/2401.00396) benchmark.
+A research framework for detecting hallucinations in Retrieval-Augmented Generation (RAG) systems, benchmarked on the human-annotated [RAGTruth](https://arxiv.org/abs/2401.00396) dataset.
 
-Given a retrieved context $C$ and a generated answer $A$, RobustRAG trains and evaluates binary classifiers to determine whether the answer is **supported** (grounded in the context) or **hallucinated** (containing ungrounded or contradicted claims).
+Given a user query/question $Q$, a retrieved context passage or structured record $C$, and an LLM-generated answer $A$, RobustRAG trains and evaluates classifiers to determine whether the generated answer is **supported** (factually grounded in context) or **hallucinated** (containing unsupported extrapolations, factual divergence, or contradictions).
 
 ---
 
-## 1. Project Overview
+## 1. Problem Statement, Objectives & Scope
 
-Retrieval-Augmented Generation mitigates language model factual errors by conditioning generation on external evidence passages. However, LLMs regularly generate unsupported extrapolations or direct contradictions even when the supporting passage is present.
+### Problem Statement
+Retrieval-Augmented Generation mitigates language model factual errors by conditioning generation on external evidence. However, modern LLMs frequently produce ungrounded statements or direct contradictions even when provided with accurate context. Detecting these failures automatically is challenging because:
+1. **Sequence Length Constraints:** Standard cross-encoders (e.g., 512-token DeBERTa) encounter long contexts (median >500 tokens in RAGTruth) and, under naive tokenization, truncate the generated answer from the sequence entirely.
+2. **Structural & Modality Heterogeneity:** Retrieved context spans free-form text, news articles, and serialized structured JSON tables (e.g., business attributes, reviews).
+3. **Subtle vs. Blatant Errors:** Hallucinations range from subtle entity/numerical substitutions (which look superficially grounded) to completely fabricated narratives.
 
 ### Core Objectives
-- **Accurate Grounding Verification:** Detect both factual conflicts and baseless information across diverse generation models and task types.
-- **Solving the Sequence Length Bottleneck:** Standard transformer cross-encoders (512 tokens) truncate long retrieved contexts and discard generated answers. RobustRAG implements dynamic **answer-preserving tokenization** and extended sliding-window attention (1024 tokens) via Longformer.
-- **Reproducible Empirical Methodology:** Every experiment snapshots its exact configuration, model weights, metrics suite, and per-example predictions for auditing.
+- **Accurate Grounding Verification:** Detect factual inconsistencies across diverse generation models and task types without relying on model-identity leakage.
+- **Answer-Preserving Tokenization:** Eliminate truncation-induced blindness by guaranteeing that the generated answer and question are preserved before allocating remaining token budget to context.
+- **Extended Sliding-Window Attention:** Deploy Longformer models ($1024$ tokens) with localized sliding-window attention and global attention anchors on key tokens.
+- **Intelligent NLP Preprocessing:** Build contradiction-aware, extractive sentence rankers that prioritize relevant context and retain conflicting evidence within a fixed budget.
+- **Methodological Reproducibility:** Archive all configs, random seeds, checkpoints, confusion matrices, and per-example predictions for auditing.
+
+### Scope & Limitations
+- **Current Benchmark Scope:** Evaluated primarily on RAGTruth ($17,790$ total records; $2,700$ test records across QA, Summarization, and Data-to-text).
+- **Binary Classification Focus:** Predicts sample-level binary hallucination labels ($y \in \{0, 1\}$). Token-level and span-level multi-task classification remain roadmap objectives.
+- **Hardware Constraints:** Training utilizes FP16/BF16 mixed precision with gradient accumulation and gradient checkpointing on consumer-grade/single-GPU systems.
 
 ---
 
-## 2. End-to-End Pipeline
+## 2. System Architecture & Workflow
 
 ```mermaid
 flowchart TD
-    subgraph Data_Pipeline [Data Preparation & Preprocessing]
-        A[Raw RAGTruth: response.jsonl + source_info.jsonl] --> B[load_jsonl / build_ragtruth_records]
-        B --> C[validate_records: Schema, Duplicates, Leakage Check]
-        C --> D[source_grouped_train_validation_split]
-        D --> E[(ragtruth.jsonl: 17,790 records)]
-        E --> F[Exploratory Data Analysis: reports/eda/]
+    subgraph Data_Pipeline [Data Preparation & Validation]
+        A["Raw RAGTruth: response.jsonl + source_info.jsonl"] --> B["data/preprocessing.py (build_ragtruth_records)"]
+        B --> C["data/validation.py (validate_records & audit)"]
+        C --> D["data/splitting.py (source_grouped split)"]
+        D --> E[("data/processed/ragtruth.jsonl<br/>Train: 13,578 | Val: 1,512 | Test: 2,700")]
+        E --> F["Exploratory Data Analysis: reports/eda/ (19 figures)"]
     end
 
-    subgraph Model_Training [Model Training & Truncation Strategy]
-        E --> M1[TF-IDF + Logistic Regression<br/>Sublinear TF, n-grams 1-2, Unlimited Context]
-        E --> M2[DeBERTa-v3-base<br/>512 Tokens, Single-String Right Truncation]
-        E --> M3[Longformer-Base 1024 Head<br/>Sliding Window + Global CLS + Drop Early Context]
-        E --> M4[Longformer-Base 1024 Tail<br/>Sliding Window + Global CLS + Drop Late Context]
+    subgraph Tokenization_Strategies [Tokenization & Truncation Strategies]
+        E --> T1["Single-String Right Truncation (DeBERTa 512)<br/>[CONTEXT] ctx [ANSWER] ans &rarr; Ans erased in 50.2%"]
+        E --> T2["Answer-Preserved C+A (Longformer 1024)<br/>&lt;s&gt; Context &lt;/s&gt;&lt;/s&gt; Answer &lt;/s&gt; (Head / Tail)"]
+        E --> T3["Intelligent NLP Q+C+A (Longformer Smart 1024)<br/>&lt;s&gt; Q &lt;/s&gt;&lt;/s&gt; Selected Context &lt;/s&gt;&lt;/s&gt; A &lt;/s&gt;"]
     end
 
-    subgraph Evaluation_Comparison [Evaluation & Artifacts]
-        M1 --> R1[reports/experiments_backup/baseline_tfidf_logreg/]
-        M2 --> R2[reports/experiments/baseline_deberta/]
-        M3 --> R3[reports/experiments/longformer_1024_head/]
-        M4 --> R4[reports/experiments/longformer_1024_tail/]
-        R1 & R2 & R3 & R4 --> EV[eval_check.py / models_research_and_presentation.ipynb]
+    subgraph Model_Architectures [Model Architectures]
+        T1 --> M1["Classical Baseline<br/>TF-IDF (unigrams+bigrams) + Logistic Reg"]
+        T1 --> M2["DeBERTa-v3-base (512 tokens)<br/>Disentangled Attention + Linear Classifier"]
+        T2 --> M3["Longformer-Base 1024 (Head / Tail)<br/>Sliding Window w=512 + Global CLS Attention"]
+        T3 --> M4["Longformer-Base 1024 Smart QCA<br/>SentenceSelector (IDF + Contradiction Bonus)"]
+    end
+
+    subgraph Evaluation_Suite [Evaluation & Reporting]
+        M1 --> R1["reports/experiments_backup/baseline_tfidf_logreg/"]
+        M2 --> R2["reports/experiments/baseline_deberta/"]
+        M3 --> R3["reports/experiments/longformer_1024_head/ & tail/"]
+        M4 --> R4["reports/experiments/longformer_1024_smart_qca/"]
+        R1 & R2 & R3 & R4 --> EV["evaluation/metrics.py (Acc, F1, ROC-AUC, PR-AUC, CM)"]
     end
 ```
 
 ---
 
-## 3. Evaluated Models & Verified Results
+## 3. Evaluated Models & Verified Benchmark Results
 
-All four models were evaluated on the fixed test split ([test.jsonl](data/processed/test.jsonl), $N = 2,700$ records, 34.93% hallucination rate). Metrics are compiled directly from the archived `metrics.json` experiment artifacts:
+All models were evaluated on the canonical, source-disjoint test split ([test.jsonl](data/processed/test.jsonl), $N = 2,700$ records, $34.93\%$ positive hallucination rate). Every metric below is sourced directly from verified `metrics.json` artifacts:
 
-| Model Architecture | Context Cap | Truncation / Attention Strategy | Accuracy | Precision | Recall | F1-Score | ROC-AUC | PR-AUC |
-| :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **TF-IDF + Logistic Reg** | Unlimited | Sublinear TF, unigrams+bigrams, $C=1.0$ | 76.78% | 69.04% | 60.76% | 64.64% | 0.7977 | 0.7333 |
-| **DeBERTa-v3-base** | 512 | Disentangled attention, single-string right truncation | 75.78% | 64.46% | **68.29%** | 66.32% | 0.7912 | 0.6222 |
-| **Longformer (Head)** | 1024 | Local window ($w=512$) + Global CLS + Keep late context | **79.78%** | **74.36%** | 64.26% | **68.94%** | **0.8296** | **0.7527** |
-| **Longformer (Tail)** | 1024 | Local window ($w=512$) + Global CLS + Keep early context | 77.56% | 67.94% | 67.66% | 67.80% | 0.8187 | 0.7331 |
+| Model Architecture | Context Cap | Input Mode | Attention / Selection Strategy | Accuracy | Precision | Recall | F1-Score | ROC-AUC | PR-AUC |
+| :--- | :---: | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **TF-IDF + Logistic Reg** | Unlimited | C + A | Sublinear TF, unigram+bigram vocabulary (437k features), $C=1.0$ | 76.78% | 69.04% | 60.76% | 64.64% | 0.7977 | 0.7333 |
+| **DeBERTa-v3-base** | 512 | C + A | Single-string right-truncation (Answer erased in 50.2% of test cases) | 75.78% | 64.46% | **68.29%** | 66.32% | 0.7912 | 0.6222 |
+| **Longformer (Head)** | 1024 | C + A | Answer-preserved tokenization + keeps trailing context closest to answer | **79.78%** | **74.36%** | 64.26% | **68.94%** | **0.8296** | **0.7527** |
+| **Longformer (Tail)** | 1024 | C + A | Answer-preserved tokenization + keeps initial context | 77.56% | 67.94% | 67.66% | 67.80% | 0.8187 | 0.7331 |
+| **Longformer Smart QCA** | 1024 | Q + C + A | Q & A preserved + extractive sentence selector (IDF + contradiction bonus) | 76.33% | 66.49% | 65.01% | 65.74% | 0.8144 | 0.7420 |
 
 ### Key Empirical Findings:
-1. **The Answer-Erasure Truncation Bug in 512-Token Encoders:**
-   In standard single-string tokenization (`[CONTEXT] <ctx> [ANSWER] <ans>`), long contexts cause default right-truncation to slice off the answer. Across the test set, **50.2% of answers were 100% eliminated** before reaching DeBERTa (97.3% in Data-to-text), reducing DeBERTa to random guessing (ROC-AUC 0.5206) on that task. On QA where answers remained intact, DeBERTa decisively outperformed TF-IDF (86.11% vs. 80.89% Acc, 0.8261 vs. 0.6998 ROC-AUC). Detailed post-mortem: [audit_report.md](audit_report.md).
-2. **Dynamic Answer-Preserving Longformer:**
-   Longformer introduced `encode_pair_with_answer_preservation`, allocating budget to the answer first and dedicating remaining tokens to context. Combined with an extended 1024-token budget, it achieved project-leading scores across Accuracy, Precision, F1, ROC-AUC, and PR-AUC.
+1. **The Answer-Erasure Truncation Pathology in DeBERTa (512 tokens):**
+   In naive single-string formatting (`[CONTEXT] <ctx> [ANSWER] <ans>`), contexts exceeding 512 subwords caused standard right-truncation to slice off the answer. Across the test split, **50.2% of answers were completely erased** (97.3% in Data-to-text). On QA where answers remained intact, DeBERTa decisively outperformed TF-IDF (86.11% vs. 80.89% Acc, 0.8261 vs. 0.6998 ROC-AUC).
+2. **Answer-Preserving Longformer-1024 (Head Truncation) is the Project Benchmark:**
+   Allocating budget to the answer first and doubling context capacity to 1024 tokens achieved project-best metrics across Accuracy (79.78%), Precision (74.36%), F1 (68.94%), ROC-AUC (0.8296), and PR-AUC (0.7527).
 3. **Head vs. Tail Context Truncation:**
    Keeping the trailing portion of the context closest to the answer (**Head truncation**) outperformed keeping the beginning (**Tail truncation**), reducing false positive alarms by **30.6%** (209 vs. 301 false positives).
+4. **Longformer Smart QCA Initial Results:**
+   The implemented `SentenceSelector` extracts relevant sentences scoring term overlap with question and answer alongside explicit contradiction bonuses (divergent numbers, polarity discordance). It achieves 0.8144 ROC-AUC and 0.7420 PR-AUC on 1024 tokens, demonstrating robust ranking capabilities.
 
 ---
 
-## 4. Repository Structure
+## 4. Repository Structure & Key Modules
 
 ```
 RobustRAG/
 |-- configs/
-|   |-- default.yaml                    # Global baseline & DeBERTa training configuration
+|   |-- default.yaml                    # Global baseline configuration & hyperparameter defaults
+|   |-- deberta.yaml                    # DeBERTa-v3 baseline settings
 |   |-- longformer_1024_head.yaml       # Longformer config with head truncation
-|   `-- longformer_1024_tail.yaml       # Longformer config with tail truncation
+|   |-- longformer_1024_tail.yaml       # Longformer config with tail truncation
+|   `-- experiments/
+|       `-- longformer_qca_smart.yaml   # Longformer Smart QCA configuration
 |-- data/
 |   |-- raw/                            # Original RAGTruth files (git-ignored)
 |   `-- processed/
-|       |-- ragtruth.jsonl              # Canonical dataset (17,790 records)
+|       |-- ragtruth.jsonl              # Canonical processed dataset (17,790 records)
 |       |-- train.jsonl                 # Train split (13,578 records)
 |       |-- validation.jsonl            # Source-grouped validation split (1,512 records)
-|       `-- test.jsonl                  # Fixed test split (2,700 records)
+|       `-- test.jsonl                  # Fixed benchmark test split (2,700 records)
 |-- reports/
-|   |-- eda/                            # 19 EDA figures and summary statistics
+|   |-- eda/                            # 19 exploratory data analysis figures and CSV statistics
 |   |-- experiments/
 |   |   |-- baseline_deberta/           # DeBERTa checkpoint and metrics
-|   |   |-- longformer_1024_head/       # Best model: Longformer Head weights and predictions
-|   |   `-- longformer_1024_tail/       # Longformer Tail weights and predictions
+|   |   |-- longformer_1024_head/       # Current best model checkpoint, config, and metrics
+|   |   |-- longformer_1024_tail/       # Longformer Tail checkpoint and metrics
+|   |   `-- longformer_1024_smart_qca/  # Longformer Smart QCA checkpoint and metrics
 |   `-- experiments_backup/
-|       `-- baseline_tfidf_logreg/      # Classical TF-IDF model bundle and metrics
+|       `-- baseline_tfidf_logreg/      # Classical TF-IDF model bundle, metrics, predictions
 |-- scripts/
-|   |-- prepare_data.py                 # Split and preprocess raw RAGTruth JSONL
-|   |-- check_processed_data.py         # Integrity and distribution audit
-|   |-- run_eda.py                      # Generate EDA charts
+|   |-- prepare_data.py                 # Ingestion, validation, and source-grouped splitting
+|   |-- check_processed_data.py         # Distribution and integrity verification
+|   |-- run_eda.py                      # Exploratory data analysis visualization generator
 |   |-- train_baseline.py               # Fit and evaluate classical TF-IDF model
 |   |-- train_deberta.py                # Train DeBERTa-v3 baseline
 |   `-- train_longformer.py             # Train Longformer Head/Tail models
 |-- src/hallucination_detector/
 |   |-- data/
 |   |   |-- schema.py                   # RAGTruthRecord dataclass
-|   |   |-- torch_dataset.py            # Answer-preserving tokenization & PyTorch Datasets
-|   |   |-- splitting.py                # Source-grouped cross-validation splitting
-|   |   `-- validation.py               # Preprocessing validation & audits
+|   |   |-- loader.py                   # Robust JSONL reader with error tracking
+|   |   |-- preprocessing.py            # Raw record parsing and label assignment
+|   |   |-- splitting.py                # Source-grouped disjoint split generator
+|   |   |-- validation.py               # Schema integrity and leakage audit
+|   |   |-- torch_dataset.py            # Answer-preserving tokenization & PyTorch dataset
+|   |   |-- sentence_selector.py        # SentenceSelector with contradiction bonus scoring
+|   |   `-- longformer_smart_dataset.py # Q+C+A segment encoding with smart context allocation
 |   |-- modeling/
 |   |   |-- tfidf_logistic.py           # TF-IDF + Logistic Regression implementation
 |   |   |-- deberta_classifier.py       # DeBERTa-v3 sequence classification wrapper
-|   |   `-- longformer_classifier.py    # Longformer with global attention classification
+|   |   |-- longformer_classifier.py    # Longformer sliding-window classifier
+|   |   `-- bilstm_classifier.py        # Classical neural BiLSTM + Bahdanau attention
 |   |-- training/
-|   |   |-- deberta_baseline.py         # DeBERTa training loop with BF16 & early stopping
-|   |   `-- longformer_train.py         # Longformer training loop with gradient accumulation
+|   |   |-- baseline.py                 # Classical training orchestration
+|   |   |-- deberta_baseline.py         # DeBERTa training loop with BF16
+|   |   |-- longformer_train.py         # Longformer training loop with gradient accumulation
+|   |   `-- longformer_smart_train.py   # Longformer Smart QCA training and evaluation entry point
 |   `-- evaluation/
-|       `-- metrics.py                  # Full metric suite (Acc, Prec, Rec, F1, ROC, PR, CM)
-|-- tests/                              # 24 unit and integration tests (100% passing)
-|-- eval_check.py                       # Lightweight evaluation & checkpoint verification script
-|-- audit_report.md                     # Deep-dive audit report on truncation effects
+|       |-- metrics.py                  # Evaluation suite (Acc, F1, ROC, PR, CM)
+|       `-- eda.py                      # Visualization and statistics routines
+|-- tests/                              # Comprehensive test suite
+|-- audit_report.md                     # Technical audit, post-mortem, and experiment roadmap
 |-- models_research_and_presentation.ipynb # Comprehensive research & presentation notebook
-|-- pyproject.toml                      # Project metadata, dependencies, and build config
-`-- requirements.txt                    # Pinned environment specification
+|-- pyproject.toml                      # Build metadata and dependency specifications
+`-- requirements.txt                    # Pinned environment dependencies
 ```
 
 ---
 
-## 5. Setup & Installation
+## 5. Dataset & Preprocessing Pipeline
 
-The project requires Python $\ge 3.12$ and uses [uv](https://docs.astral.sh/uv/) for high-speed, deterministic package management.
+RobustRAG builds upon the [RAGTruth Benchmark](https://arxiv.org/abs/2401.00396) ([GitHub](https://github.com/luomancs/RAGTruth)), licensed under MIT.
 
-### Windows PowerShell Setup
-
-```powershell
-# 1. Clone repository and navigate to workspace
-git clone https://github.com/nishantwhat/RobustRAG.git
-cd RobustRAG
-
-# 2. Install uv if not already installed
-pip install uv
-
-# 3. Create virtual environment and synchronize dependencies
-uv venv .venv
-.\.venv\Scripts\Activate.ps1
-uv sync
-
-# 4. Verify PyTorch CUDA support
-python -c "import torch; print(f'PyTorch {torch.__version__} | CUDA Available: {torch.cuda.is_available()}')"
-```
-
----
-
-## 6. Dataset Preparation & Ingestion
-
-RobustRAG uses the human-annotated [RAGTruth Benchmark](https://arxiv.org/abs/2401.00396) ([GitHub: RAGTruth](https://github.com/luomancs/RAGTruth)), licensed under MIT.
+### Dataset Composition
+- **Total Records:** 17,790 records across three primary generative tasks:
+  - **Question Answering (QA):** Text context + prompt question + generated answer.
+  - **Summarization:** Long document/news context + generated summary.
+  - **Data-to-Text:** Structured dictionary/JSON business records + generated review/description.
+- **Split Distribution:**
+  - `train`: 13,578 records ($76.3\%$)
+  - `validation`: 1,512 records ($8.5\%$) &mdash; generated via source-grouped disjoint sampling
+  - `test`: 2,700 records ($15.2\%$) &mdash; fixed benchmark split ($900$ QA, $900$ Summary, $900$ Data-to-text)
+- **Generative Sources:** Responses produced by GPT-4, GPT-3.5-Turbo, Llama-2 (7B, 13B, 70B), and Mistral-7B-Instruct.
+- **Label Definition:** Binary label where $y = 1$ if the response contains at least one human-annotated hallucination span; $y = 0$ otherwise.
 
 ### Ingestion Commands
-Place raw `response.jsonl` and `source_info.jsonl` into `data/raw/` and run:
-
+Place raw `response.jsonl` and `source_info.jsonl` into `data/raw/` and execute:
 ```powershell
-# Preprocess, validate schema, and generate source-grouped splits
+# 1. Ingest, join by source_id, enforce schema, and produce splits
 uv run python scripts/prepare_data.py `
   --responses data/raw/response.jsonl `
   --sources data/raw/source_info.jsonl `
   --output-dir data/processed
 
-# Audit integrity of processed records
+# 2. Audit record counts, label rates, and verify source-disjointness
 uv run python scripts/check_processed_data.py
 ```
 
-### Dataset Composition:
-- **Total records:** 17,790 (Train: 13,578, Validation: 1,512, Test: 2,700).
-- **Task distribution:** 900 QA, 900 Summarization, 900 Data-to-text in the test split.
-- **Source generators:** GPT-4, GPT-3.5-Turbo, Llama-2 (7B, 13B, 70B), Mistral-7B-Instruct.
-- **Split integrity:** Source IDs are strictly disjoint between train and test to prevent passage leakage.
+---
+
+## 6. Installation & Environment Setup
+
+RobustRAG requires Python $\ge 3.12$ and uses [uv](https://docs.astral.sh/uv/) for high-speed package management.
+
+### Setup Instructions (Windows PowerShell)
+
+```powershell
+# 1. Clone repository and navigate to root
+git clone https://github.com/nishantwhat/RobustRAG.git
+cd RobustRAG
+
+# 2. Create virtual environment and install dependencies (including UI)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[ui]"
+
+# 3. Launch the Streamlit Hallucination Detection App
+streamlit run app/streamlit_app.py
+```
+
+### Linux / macOS (Bash)
+
+```bash
+git clone https://github.com/nishantwhat/RobustRAG.git
+cd RobustRAG
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[ui]"
+streamlit run app/streamlit_app.py
+```
+
+> 📖 **Hugging Face Model Hub:** All 5 models are published to Hugging Face Hub under [`nishantwhat`](https://huggingface.co/nishantwhat). Models download lazily on first inference. See [HUGGINGFACE_MODELS.md](HUGGINGFACE_MODELS.md) for architecture breakdowns, disk footprints, and configuration.
 
 ---
 
-## 7. Execution Commands
+## 7. Execution Commands: Training, Evaluation & Testing
 
-### A. Run Test Suite
+### A. Interactive Web UI
 ```powershell
-uv run pytest -q
+streamlit run app/streamlit_app.py
 ```
-*Current status: 24 passed tests covering loaders, schemas, answer-preservation tokenization, model loading, and metrics.*
+
+### B. Run Test Suite
+```powershell
+# Run the core unit test suite
+python -m pytest tests/test_data.py tests/test_preprocessing.py tests/test_splitting.py tests/test_validation.py tests/test_baseline_model.py
+```
 
 ### B. Train Models
 ```powershell
@@ -194,7 +245,7 @@ uv run python scripts/train_baseline.py
 # 2. Train DeBERTa-v3-base (512 tokens)
 uv run python scripts/train_deberta.py
 
-# 3. Train Longformer-Base (1024 tokens, Head truncation - Best Model)
+# 3. Train Longformer-Base (1024 tokens, Head truncation - Project Best)
 uv run python scripts/train_longformer.py `
   --config configs/longformer_1024_head.yaml `
   --output reports/experiments/longformer_1024_head
@@ -203,112 +254,97 @@ uv run python scripts/train_longformer.py `
 uv run python scripts/train_longformer.py `
   --config configs/longformer_1024_tail.yaml `
   --output reports/experiments/longformer_1024_tail
+
+# 5. Train / Evaluate Longformer Smart QCA
+uv run python -m hallucination_detector.training.longformer_smart_train `
+  --config configs/experiments/longformer_qca_smart.yaml `
+  --data data/processed/ragtruth.jsonl `
+  --output-dir reports/experiments/longformer_1024_smart_qca
 ```
 
-### C. Evaluate Checkpoints Directly
-To run fast evaluation of the best Longformer checkpoint on the test set:
+### C. Evaluate Saved Checkpoints
 ```powershell
+# Fast evaluation of Longformer-Head checkpoint on test split
 uv run python eval_check.py
 ```
 
-### D. Interactive Presentation & Research Notebook
-Launch the presentation notebook to explore all comparative charts, confusion matrices, and the 5-case qualitative study:
+### D. Interactive Research Notebook
 ```powershell
 uv run jupyter notebook models_research_and_presentation.ipynb
 ```
 
 ---
 
-## 8. Checkpoints & Inference
+## 8. Checkpoints, Reports & Programmatic Inference
 
 ### Model Weights Storage
-Trained transformer checkpoints are saved in Hugging Face compatible format:
-- **Best Model:** `reports/experiments/longformer_1024_head/best_model/` (`model.safetensors`, `config.json`, tokenizer files).
-- **DeBERTa Baseline:** `reports/experiments/baseline_deberta/best_model/`.
-- **Classical Baseline:** `reports/experiments_backup/baseline_tfidf_logreg/model.pkl`.
+Trained checkpoints and evaluation artifacts are stored under `reports/experiments/`:
+- **Best Model (Longformer Head 1024):** `reports/experiments/longformer_1024_head/best_model/`
+- **Smart QCA Longformer 1024:** `reports/experiments/longformer_1024_smart_qca/best_model/`
+- **DeBERTa Baseline:** `reports/experiments/baseline_deberta/best_model/`
+- **TF-IDF Classical Baseline:** `reports/experiments_backup/baseline_tfidf_logreg/model.pkl`
 
-> **Note on Model Checkpoint Distribution:** Large weight files (`*.safetensors`, `best_optimizer.pt`) exceed Git file limits and are excluded by `.gitignore`. For external distribution, model weights should be packaged and attached to GitHub Releases or hosted on Hugging Face Model Hub (pending external release).
+> **Note on Model Checkpoint Distribution:** Large weight files (`*.safetensors`, `best_optimizer.pt`) exceed Git file limits and are excluded via `.gitignore`. Checkpoints are archived locally or packaged via GitHub Releases for external distribution.
 
-### Programmatic Inference (Python)
-You can run zero-shot hallucination inference directly using saved checkpoints without retraining:
+### Programmatic Inference Example
 
 ```python
-from src.hallucination_detector.data.schema import RAGTruthRecord
-from src.hallucination_detector.modeling.longformer_classifier import LongformerClassifier
+from hallucination_detector.data.schema import RAGTruthRecord
+from hallucination_detector.modeling.longformer_classifier import LongformerClassifier
 
 # Load trained Longformer-Head checkpoint
 model = LongformerClassifier.from_pretrained(
     "reports/experiments/longformer_1024_head/best_model",
     max_length=1024,
     truncation_strategy="head",
-    global_attention_mode="cls"
+    global_attention_mode="cls",
 )
 
-# Define query sample
+# Construct a test query record
 record = RAGTruthRecord(
-    id="demo_1",
-    source_id="src_1",
-    context="The Federal Reserve raised interest rates by 25 basis points on Wednesday.",
-    answer="The Federal Reserve decided to cut interest rates by 50 basis points.",
-    question="What did the Federal Reserve do?",
-    hallucinated=True
+    id="eval_001",
+    source_id="src_001",
+    question="What did the central bank announce?",
+    context="The Federal Reserve raised the benchmark interest rate by 25 basis points on Wednesday.",
+    answer="The Federal Reserve cut interest rates by 50 basis points.",
+    hallucinated=True,
 )
 
 # Predict probabilities: [P(supported), P(hallucinated)]
 probs = model.predict_proba([record], device="cuda", bf16=True)
 print(f"Hallucination Probability: {probs[0, 1]:.4f}")
-# Output: > 0.85 (Correctly flags hallucination)
+# Output: > 0.85 (Correctly identified as hallucinated)
 ```
 
 ---
 
-## 9. Project Phases & Roadmap
-
-```mermaid
-gantt
-    title RobustRAG Project Phases
-    dateFormat  YYYY-MM
-    section Phase 1: Foundation
-    Dataset Ingestion & Validation   :done, p1, 2026-08, 2026-09
-    Exploratory Data Analysis (EDA)  :done, p2, 2026-09, 2026-09
-    Classical Baseline (TF-IDF)     :done, p3, 2026-09, 2026-09
-    section Phase 2: Neural Modeling
-    DeBERTa-v3 Baseline (512 tokens):done, p4, 2026-09, 2026-10
-    Answer-Erasure Bug Audit         :done, p5, 2026-10, 2026-10
-    Longformer (1024 Head & Tail)   :done, p6, 2026-10, 2026-10
-    section Phase 3: Research Synthesis
-    Presentation Notebook (ipynb)   :done, p7, 2026-10, 2026-10
-    Final Cross-Model Comparison    :done, p8, 2026-10, 2026-10
-    section Phase 4: Future Roadmap
-    Full 4096-token Longformer       :active, p9, 2026-10, 2026-11
-    Input Ablation (Q+C+A)          :p10, 2026-11, 2026-12
-    Span-Level Token Classification :p11, 2026-12, 2027-01
-```
+## 9. Current Status & Project Roadmap
 
 | Phase | Milestone | Status | Description |
 | :--- | :--- | :---: | :--- |
-| **Phase 1** | Ingestion & Baseline | **Completed** | Clean pipeline on RAGTruth, source-grouped splitting, TF-IDF benchmark (76.78% Acc). |
-| **Phase 2** | Pretrained Transformers | **Completed** | Trained DeBERTa-v3-base; audited the Answer-Erasure bug; built answer-preserved Longformer (79.78% Acc, 0.8296 ROC-AUC). |
-| **Phase 3** | Presentation & Disagreements | **Completed** | Created `models_research_and_presentation.ipynb` with 5-case study, ROC/PR curves, and Brier calibration analysis. |
-| **Phase 4** | Advanced Scaling | **Planned** | Full 4,096-token sliding-window Longformer; Question-Context-Answer ($Q+C+A$) ablation; span-level multi-task classification. |
+| **Phase 1** | Ingestion & Baselines | **Completed** | Full ingestion pipeline on RAGTruth, source-grouped splits, TF-IDF benchmark (76.78% Acc, 0.7977 ROC-AUC). |
+| **Phase 2** | Transformer Exploration | **Completed** | Trained DeBERTa-v3-base; audited and isolated the Answer-Erasure bug; implemented Longformer 1024 Head & Tail (79.78% Acc, 0.8296 ROC-AUC). |
+| **Phase 3** | Smart NLP Q+C+A | **Completed** | Implemented `SentenceSelector` with IDF scoring and contradiction bonuses; verified Longformer Smart QCA checkpoint (76.33% Acc, 0.8144 ROC-AUC). |
+| **Phase 4** | Research Synthesis | **Completed** | Built `models_research_and_presentation.ipynb`, comprehensive calibration analysis, and systematic audit report. |
+| **Phase 5** | Extended Context & Spans | **Planned** | Full 4,096-token Longformer scaling; multi-task token classification for exact hallucination span extraction. |
 
 ---
 
-## 10. References & Citations
+## 10. References & Acknowledgments
 
 1. **RAGTruth Benchmark Paper:**  
    Yuan, Y., et al. (2024). *RAGTruth: A Hallucination Benchmark for Retrieval-Augmented Generation*. [arXiv:2401.00396](https://arxiv.org/abs/2401.00396).
 2. **Longformer Architecture:**  
    Beltagy, I., Peters, M. E., & Cohan, A. (2020). *Longformer: The Long-Document Transformer*. [arXiv:2004.05150](https://arxiv.org/abs/2004.05150).
-3. **DeBERTa-v3:**  
+3. **DeBERTa-v3 Architecture:**  
    He, P., Gao, J., & Chen, W. (2021). *DeBERTaV3: Improving DeBERTa using ELECTRA-Style Pre-Training with Gradient-Disentangled Embedding Sharing*. [arXiv:2111.09543](https://arxiv.org/abs/2111.09543).
-4. **Hugging Face Model Cards:**
+4. **Hugging Face Model References:**
    - [`allenai/longformer-base-4096`](https://huggingface.co/allenai/longformer-base-4096)
    - [`microsoft/deberta-v3-base`](https://huggingface.co/microsoft/deberta-v3-base)
 
 ---
 
-## 11. Contributors & License
+## 11. Author & License
 
 - **Author:** Nishant Bothra ([GitHub: nishantwhat](https://github.com/nishantwhat))
 - **License:** Released under the [MIT License](LICENSE).

@@ -1,0 +1,32 @@
+project:
+  name: rag-hallucination-detector-smart-longformer
+  seed: 42
+
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+
+model:
+  name: allenai/longformer-base-4096
+  num_labels: 2
+  max_length: 1024
+  truncation_strategy: smart_selector
+  global_attention_mode: cls
+
+training:
+  batch_size: 2
+  gradient_accumulation_steps: 8
+  learning_rate: 2.0e-05
+  epochs: 3
+  weight_decay: 0.01
+  early_stopping_patience: 1
+  bf16: true
+  gradient_checkpointing: true
+
+experiment:
+  input_mode: qca
+
+nlp_preprocessing:
+  selector_type: idf_relevance_contradiction
+  alpha: 0.4
+  lead_bias: true

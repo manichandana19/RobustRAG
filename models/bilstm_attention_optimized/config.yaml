@@ -1,0 +1,28 @@
+project:
+  name: rag-hallucination-detector-bilstm-optimized
+  seed: 42
+data:
+  processed_file: data/processed/ragtruth.jsonl
+  output_dir: models/bilstm_attention_optimized
+bilstm_model:
+  vocab_size: 50000
+  min_freq: 2
+  embed_dim: 256
+  hidden_dim: 256
+  num_layers: 2
+  dropout: 0.4
+  spatial_dropout: 0.2
+  use_attention: true
+  attention_dim: 128
+  max_length: 512
+  truncation_strategy: context_tail
+bilstm_training:
+  batch_size: 64
+  learning_rate: 0.001
+  early_stopping_patience: 3
+  lr_reduce_patience: 1
+  lr_factor: 0.5
+  weight_decay: 0.0001
+  epochs: 10
+  grad_clip: 1.0
+  use_class_weight: true

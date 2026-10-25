@@ -99,6 +99,22 @@ MODEL_CATALOG: dict[str, ModelMetadata] = {
         description="Neural recurrent baseline with additive attention over sequence tokens.",
         limitations="Fixed 50k vocabulary; lacks deep pre-trained contextual semantic transfer.",
     ),
+    "optimized-bilstm": ModelMetadata(
+        key="optimized-bilstm",
+        display_name="RobustRAG (Optimized BiLSTM)",
+        repo_id="nishantwhat/robustrag-optimized-bilstm",
+        architecture="Custom BiLSTM with Attention",
+        input_mode="C+A",
+        description=(
+            "Custom optimized BiLSTM sequence model with an attention mechanism "
+            "for hallucination detection. Preserves token sequences and utilizes "
+            "soft attention weights over retrieved context."
+        ),
+        limitations=(
+            "Requires the checkpoint, vocabulary/tokenizer, and configuration "
+            "to match the model's custom architecture."
+        ),
+    ),
     "tfidf-lr": ModelMetadata(
         key="tfidf-lr",
         display_name="TF-IDF + Logistic Regression",
@@ -151,6 +167,8 @@ class ModelRegistry:
             model = self._load_tfidf(meta.repo_id, rev)
         elif model_key == "bilstm-attention":
             model = self._load_bilstm(meta.repo_id, rev, target_device)
+        elif model_key == "optimized-bilstm":
+            model = self._load_optimized_bilstm(meta.repo_id, rev, target_device)
         elif model_key == "deberta":
             model = self._load_deberta(meta.repo_id, rev, target_device)
         elif model_key == "longformer-head":
@@ -185,7 +203,47 @@ class ModelRegistry:
         hf_hub_download(repo_id=repo_id, filename="vocab.json", revision=revision, cache_dir=self.cache_dir)
         hf_hub_download(repo_id=repo_id, filename="model_config.json", revision=revision, cache_dir=self.cache_dir)
         return BiLSTMClassifier.load(model_dir, device=device)
+    def _load_optimized_bilstm(
+        self,
+        repo_id: str,
+        revision: str,
+        device: str | torch.device,
+    ) -> BiLSTMClassifier:
+        """Download and load the optimized BiLSTM checkpoint from Hugging Face.
 
+        The checkpoint must be compatible with BiLSTMClassifier.load().
+        Downloading is handled by huggingface_hub's persistent cache.
+        """
+        model_dir = Path(
+            snapshot_download(
+                repo_id=repo_id,
+                revision=revision,
+                cache_dir=str(self.cache_dir) if self.cache_dir else None,
+            )
+        )
+
+        # Fail clearly if the repository does not contain the expected
+        # files instead of accidentally loading another model's local assets.
+        required_files = (
+            "bilstm_weights.pt",
+            "vocab.json",
+            "model_config.json",
+        )
+        missing_files = [
+            filename
+            for filename in required_files
+            if not (model_dir / filename).is_file()
+        ]
+
+        if missing_files:
+            raise FileNotFoundError(
+                f"Optimized BiLSTM repository '{repo_id}' at revision "
+                f"'{revision}' is missing expected files: {missing_files}. "
+                "Update the loader to match the repository's actual filenames "
+                "and checkpoint format."
+            )
+
+        return BiLSTMClassifier.load(model_dir, device=device)
     def _load_deberta(self, repo_id: str, revision: str, device: str | torch.device) -> dict[str, Any]:
         local_dir = Path("reports/experiments/baseline_deberta/best_model")
         if not self.prefer_remote and (local_dir / "model.safetensors").exists():
@@ -269,7 +327,10 @@ class ModelRegistry:
             target_dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
             probs = model_obj.predict_proba([record], device=target_dev)
             p_sup, p_hal = float(probs[0, 0]), float(probs[0, 1])
-
+        elif model_key == "optimized-bilstm":
+            target_dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
+            probs = model_obj.predict_proba([record], device=target_dev)
+            p_sup, p_hal = float(probs[0, 0]), float(probs[0, 1])
         elif model_key == "deberta":
             tok = model_obj["tokenizer"]
             mod = model_obj["model"]
